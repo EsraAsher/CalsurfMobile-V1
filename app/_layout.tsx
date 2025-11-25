@@ -1,24 +1,50 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+// app/_layout.tsx
 import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { StatusBar } from 'react-native';
+import { AuthProvider, useAuth } from '../.vscode/src/context/AuthContext';
+import AuthScreen from '../.vscode/src/screens/AuthScreen'; // Import the new screen
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
+// We split this into a sub-component so we can use the 'useAuth' hook
+function RootNavigation() {
+  const { user, loading } = useAuth();
 
-export const unstable_settings = {
-  anchor: '(tabs)',
-};
+  // 1. Show Loading Screen while Firebase connects
+  if (loading) {
+    return null; // Or a splash screen
+  }
+
+  // 2. If NO user, show Login Screen
+  if (!user) {
+    return <AuthScreen />;
+  }
+
+  // 3. If User exists, show the App
+  return (
+    <Stack 
+      screenOptions={{ 
+        headerShown: false,
+        animation: 'fade_from_bottom',
+        contentStyle: { backgroundColor: '#181621' }
+      }}
+    >
+      <Stack.Screen name="index" />
+      <Stack.Screen name="profile" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="stats" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="insights" options={{ animation: 'slide_from_right' }} />
+      {/* Prevent users from navigating to 'voice' manually if needed */}
+      <Stack.Screen name="voice" options={{ presentation: 'modal' }} />
+    </Stack>
+  );
+}
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-      </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
+    <AuthProvider> 
+      <SafeAreaProvider>
+        <StatusBar barStyle="light-content" />
+        <RootNavigation />
+      </SafeAreaProvider>
+    </AuthProvider>
   );
 }
