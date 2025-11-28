@@ -5,38 +5,49 @@ import {
   ActivityIndicator, Alert, KeyboardAvoidingView, Platform 
 } from 'react-native';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from 'firebase/auth';
-import { auth, db } from '../config/firebase'; // Make sure db is exported from config
 import { doc, setDoc } from 'firebase/firestore';
+import { auth, db } from '../config/firebase';
 import { Feather } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { COLORS, SPACING, RADIUS } from '../theme';
+import { useRouter } from 'expo-router';
+
+// --- MATCHING PALETTE ---
+const COLORS = {
+  bg: '#131313',
+  neon: '#D2FF52', // Lime Accent
+  surface: '#1A1A1A', // Input background
+  border: '#333333',
+  text: '#F7F7F7',
+  textMuted: '#888888',
+  danger: '#FF453A'
+};
+
+const FONTS = {
+  heading: 'Montserrat_700Bold',
+  sub: 'Poppins_600SemiBold',
+  body: 'Inter_400Regular',
+};
 
 export default function AuthScreen() {
+  const router = useRouter();
   const [isLogin, setIsLogin] = useState(true);
-  const [name, setName] = useState(''); // New State for Name
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Password Strength Checker
-  const getPasswordStrengthFeedback = () => {
-    if (!password || isLogin) return []; // Only show for sign-up
-    
-    const feedback = [];
-    if (password.length < 7) feedback.push('At least 7 characters');
-    if (!/[A-Z]/.test(password)) feedback.push('Add one capital letter');
-    if (!/[0-9]/.test(password)) feedback.push('Include a number');
-    if (!/[!@#$%^&*]/.test(password)) feedback.push('Try adding a symbol (!@#$%^&*)');
-    
-    return feedback;
+  const handleToggleMode = () => {
+    if (isLogin) {
+      // User wants to sign up - go to onboarding
+      router.push('/onboarding');
+    } else {
+      // User wants to login - toggle back to login mode
+      setIsLogin(true);
+    }
   };
-
-  const passwordFeedback = getPasswordStrengthFeedback();
-  const isPasswordStrong = !isLogin && password.length > 0 && passwordFeedback.length === 0;
 
   const handleAuth = async () => {
     if (!email || !password || (!isLogin && !name)) {
-      Alert.alert("Error", "Please fill in all fields.");
+      Alert.alert("Missing Info", "Please fill in all fields.");
       return;
     }
     
@@ -45,14 +56,10 @@ export default function AuthScreen() {
       if (isLogin) {
         await signInWithEmailAndPassword(auth, email, password);
       } else {
-        // 1. Create User
+        // Sign Up Flow
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
-
-        // 2. Update Display Name in Auth
         await updateProfile(user, { displayName: name });
-
-        // 3. Create User Document in Firestore (for future profile data)
         await setDoc(doc(db, "users", user.uid), {
           uid: user.uid,
           displayName: name,
@@ -62,12 +69,12 @@ export default function AuthScreen() {
         });
       }
     } catch (error: any) {
-      let msg = error.message;
-      if (msg.includes('auth/invalid-email')) msg = 'Invalid email address.';
-      if (msg.includes('auth/user-not-found')) msg = 'No user found with this email.';
-      if (msg.includes('auth/wrong-password')) msg = 'Wrong password. Try forgot password.';
-      if (msg.includes('auth/invalid-credentials')) msg = 'Wrong password. Try forgot password.';
-      if (msg.includes('auth/email-already-in-use')) msg = 'Email already in use.';
+      let msg = "An unexpected error occurred.";
+      if (error.code === 'auth/invalid-email') msg = 'Invalid email address.';
+      if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') msg = 'Invalid email or password.';
+      if (error.code === 'auth/wrong-password') msg = 'Invalid email or password.';
+      if (error.code === 'auth/email-already-in-use') msg = 'This email is already registered.';
+      if (error.code === 'auth/weak-password') msg = 'Password must be at least 6 characters.';
       Alert.alert("Authentication Failed", msg);
     } finally {
       setLoading(false);
@@ -76,118 +83,202 @@ export default function AuthScreen() {
 
   const handleForgotPassword = async () => {
     if (!email) {
-      Alert.alert("Missing Email", "Please enter your email address.");
+      Alert.alert("Missing Email", "Enter your email first, then tap Forgot Password.");
       return;
     }
     try {
       await sendPasswordResetEmail(auth, email);
-      Alert.alert("Email Sent", "Sometimes it lands in spam, so be sure to check there too.!");
+      Alert.alert("Email Sent", "Check your inbox for a reset link!");
     } catch (error: any) {
         Alert.alert("Error", error.message);
     }
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.container}>
+    <KeyboardAvoidingView 
+      behavior={Platform.OS === "ios" ? "padding" : "height"} 
+      style={styles.container}
+    >
+      {/* BACKGROUND BLOB (Matches Welcome Screen) */}
+      <View style={styles.blob} />
+
       <View style={styles.content}>
+        
+        {/* HEADER */}
         <View style={styles.header}>
-          <View style={styles.iconCircle}><Feather name="activity" size={40} color="#FFF" /></View>
-          <Text style={styles.title}>Thicc Log</Text>
-          <Text style={styles.subtitle}>{isLogin ? "Welcome back, Legend!" : "Start your journey today."}</Text>
+          <Text style={styles.title}>
+            {isLogin ? "Welcome Back." : "Join the Club."}
+          </Text>
+          <Text style={styles.subtitle}>
+            {isLogin ? "Let's crush some goals today." : "Start your fitness journey now."}
+          </Text>
         </View>
 
+        {/* FORM */}
         <View style={styles.form}>
-          {/* NAME INPUT (Only for Sign Up) */}
+          
           {!isLogin && (
             <View style={styles.inputContainer}>
                 <Feather name="user" size={20} color={COLORS.textMuted} style={styles.inputIcon} />
-                <TextInput 
-                    style={styles.input} 
-                    placeholder="Full Name" 
-                    placeholderTextColor={COLORS.textMuted} 
-                    value={name} 
-                    onChangeText={setName} 
+                <TextInput
+                    style={styles.input}
+                    placeholder="Full Name"
+                    placeholderTextColor={COLORS.textMuted}
+                    value={name}
+                    onChangeText={setName}
                 />
             </View>
           )}
 
           <View style={styles.inputContainer}>
             <Feather name="mail" size={20} color={COLORS.textMuted} style={styles.inputIcon} />
-            <TextInput style={styles.input} placeholder="Email" placeholderTextColor={COLORS.textMuted} autoCapitalize="none" value={email} onChangeText={setEmail} />
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              placeholderTextColor={COLORS.textMuted}
+              autoCapitalize="none"
+              value={email}
+              onChangeText={setEmail}
+            />
           </View>
 
           <View style={styles.inputContainer}>
             <Feather name="lock" size={20} color={COLORS.textMuted} style={styles.inputIcon} />
-            <TextInput style={styles.input} placeholder="Password" placeholderTextColor={COLORS.textMuted} secureTextEntry value={password} onChangeText={setPassword} />
+            <TextInput
+              style={styles.input}
+              placeholder="Password"
+              placeholderTextColor={COLORS.textMuted}
+              secureTextEntry
+              value={password}
+              onChangeText={setPassword}
+            />
           </View>
 
-          {/* PASSWORD STRENGTH FEEDBACK (Only on Sign Up) */}
-          {!isLogin && password.length > 0 && (
-            <View style={styles.feedbackContainer}>
-              {isPasswordStrong ? (
-                <View style={styles.successRow}>
-                  <Feather name="check-circle" size={16} color="#10B981" />
-                  <Text style={styles.successText}>Password looks great! 🎉</Text>
-                </View>
-              ) : (
-                <View>
-                  {passwordFeedback.map((msg, idx) => (
-                    <View key={idx} style={styles.feedbackRow}>
-                      <Feather name="alert-circle" size={14} color={COLORS.textMuted} />
-                      <Text style={styles.feedbackText}>{msg}</Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </View>
-          )}
-
           {isLogin && (
-            <TouchableOpacity onPress={handleForgotPassword} style={{ alignSelf: 'flex-end' }}>
-                <Text style={{ color: COLORS.primary, fontSize: 14, fontWeight: '600' }}>Forgot Password?</Text>
+            <TouchableOpacity onPress={handleForgotPassword} style={{ alignSelf: 'flex-end', marginTop: 8 }}>
+                <Text style={{ color: COLORS.textMuted, fontFamily: FONTS.body, fontSize: 14 }}>Forgot Password?</Text>
             </TouchableOpacity>
           )}
 
-          <TouchableOpacity onPress={handleAuth} disabled={loading} activeOpacity={0.8}>
-            <LinearGradient colors={[COLORS.primary, COLORS.accent]} start={{x:0, y:0}} end={{x:1, y:0}} style={styles.button}>
-              {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.buttonText}>{isLogin ? "Sign In" : "Create Account"}</Text>}
-            </LinearGradient>
+          {/* NEON BUTTON */}
+          <TouchableOpacity 
+            onPress={handleAuth} 
+            disabled={loading} 
+            activeOpacity={0.8}
+            style={styles.neonButton}
+          >
+            {loading ? (
+              <ActivityIndicator color="#000" />
+            ) : (
+              <Text style={styles.neonButtonText}>
+                {isLogin ? "SIGN IN" : "CREATE ACCOUNT"}
+              </Text>
+            )}
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity onPress={() => setIsLogin(!isLogin)} style={styles.footer}>
+        {/* TOGGLE */}
+        <TouchableOpacity onPress={handleToggleMode} style={styles.footer}>
           <Text style={styles.footerText}>
-            {isLogin ? "Don't have an account? " : "Already have an account? "}
-            <Text style={styles.link}>{isLogin ? "Sign Up" : "Log In"}</Text>
+            {isLogin ? "New here? " : "Already have an account? "}
+            <Text style={styles.link}>{isLogin ? "Create Account" : "Sign In"}</Text>
           </Text>
         </TouchableOpacity>
+
       </View>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background, justifyContent: 'center' },
-  content: { padding: SPACING.xl },
-  header: { alignItems: 'center', marginBottom: SPACING.xl * 1.5 },
-  iconCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: COLORS.cardHighlight, justifyContent: 'center', alignItems: 'center', marginBottom: SPACING.m, borderWidth: 1, borderColor: COLORS.border },
-  title: { fontSize: 32, fontWeight: 'bold', color: '#FFF', marginBottom: SPACING.s },
-  subtitle: { fontSize: 16, color: COLORS.textMuted },
-  form: { gap: SPACING.m },
-  inputContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.m, paddingHorizontal: SPACING.m, height: 56 },
-  inputIcon: { marginRight: SPACING.m },
-  input: { flex: 1, color: '#FFF', fontSize: 16, height: '100%' },
-  
-  // PASSWORD STRENGTH FEEDBACK
-  feedbackContainer: { marginTop: SPACING.s, paddingHorizontal: SPACING.s, paddingVertical: SPACING.s, backgroundColor: 'rgba(139, 92, 246, 0.08)', borderRadius: RADIUS.s, borderLeftWidth: 3, borderLeftColor: COLORS.primary },
-  successRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.s },
-  successText: { fontSize: 13, color: '#10B981', fontWeight: '600' },
-  feedbackRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.s, marginBottom: SPACING.s },
-  feedbackText: { fontSize: 12, color: COLORS.textMuted, fontWeight: '500' },
-  
-  button: { height: 56, borderRadius: RADIUS.m, justifyContent: 'center', alignItems: 'center', marginTop: SPACING.s },
-  buttonText: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
-  footer: { marginTop: SPACING.xl, alignItems: 'center' },
-  footerText: { color: COLORS.textMuted, fontSize: 14 },
-  link: { color: COLORS.primary, fontWeight: 'bold' },
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+    justifyContent: 'center',
+  },
+  blob: {
+    position: 'absolute',
+    top: -100,
+    left: -100,
+    width: 400,
+    height: 400,
+    backgroundColor: '#1C46F5', // Blue glow matching Onboarding
+    borderRadius: 200,
+    opacity: 0.15,
+    transform: [{ scale: 1.2 }],
+    // Note: React Native 'filter' prop is not standard on all versions, 
+    // but opacity + large size creates a similar diffuse look.
+  },
+  content: {
+    padding: 24,
+  },
+  header: {
+    marginBottom: 40,
+  },
+  title: {
+    fontFamily: FONTS.heading,
+    fontSize: 40, // Big Bold like Onboarding
+    color: COLORS.text,
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontFamily: FONTS.body,
+    fontSize: 16,
+    color: COLORS.textMuted,
+  },
+  form: {
+    gap: 16,
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16, // Matching rounded corners
+    paddingHorizontal: 16,
+    height: 60, // Taller inputs
+  },
+  inputIcon: {
+    marginRight: 16,
+  },
+  input: {
+    flex: 1,
+    color: COLORS.text,
+    fontFamily: FONTS.body,
+    fontSize: 16,
+    height: '100%',
+  },
+  neonButton: {
+    height: 60,
+    borderRadius: 30, // Pill shape
+    backgroundColor: COLORS.neon,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 24,
+    shadowColor: COLORS.neon,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  neonButtonText: {
+    color: '#000', // Black text on Neon
+    fontFamily: FONTS.sub,
+    fontSize: 16,
+    letterSpacing: 1,
+  },
+  footer: {
+    marginTop: 40,
+    alignItems: 'center',
+  },
+  footerText: {
+    color: COLORS.textMuted,
+    fontFamily: FONTS.body,
+    fontSize: 14,
+  },
+  link: {
+    color: COLORS.text, // White text for link to stand out
+    fontFamily: FONTS.sub,
+  },
 });

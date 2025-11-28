@@ -19,22 +19,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Listen for login/logout changes
+    console.log("AuthContext: Setting up listener...");
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (currentUser) {
+        console.log("AuthContext: User logged in:", currentUser.email);
+      } else {
+        console.log("AuthContext: User logged OUT");
+      }
       setUser(currentUser);
       setLoading(false);
     });
     return unsubscribe;
   }, []);
 
-  if (loading) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.background }}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-      </View>
-    );
-  }
-
+  // We don't return a loading spinner here anymore, 
+  // we let the Layout handle it so we can show the Splash Screen instead.
   return (
     <AuthContext.Provider value={{ user, loading }}>
       {children}

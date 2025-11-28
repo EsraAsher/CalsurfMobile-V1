@@ -1,39 +1,44 @@
 // src/config/firebase.ts
-import { initializeApp, getApp, getApps } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { initializeApp, getApp, getApps, FirebaseApp } from "firebase/app";
+import { getAuth, initializeAuth, Auth } from "firebase/auth";
 import { getFirestore, initializeFirestore, Firestore } from "firebase/firestore";
-import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
+import { getStorage, FirebaseStorage } from "firebase/storage";
+// This import ensures the storage library is available for Firebase to find automatically
+import '@react-native-async-storage/async-storage';
 
-// YOUR KEYS - Use environment variables or update with valid credentials from Firebase Console
+// 👇 PASTE YOUR REAL KEYS HERE (From the New Project)
 const firebaseConfig = {
-  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || "AIzaSyDQKp0-c3_MiW8fG8dGH0lVF4DUCY3ZDqc",
-  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN || "calsurf-mobile1.firebaseapp.com",
-  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID || "calsurf-mobile1",
-  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET || "calsurf-mobile1.firebasestorage.app",
-  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "139835322152",
-  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID || "1:139835322152:web:440a5a83c2887ae94fea1d"
+  apiKey: "AIzaSyD3dyQ52nGtgJxwwHvyfDIN3PiE90v8XJY", 
+  authDomain: "calsurfing.firebaseapp.com",
+  projectId: "calsurfing",
+  storageBucket: "calsurfing.firebasestorage.app",
+  messagingSenderId: "9645458694",
+  appId: "1:9645458694:web:..." 
 };
 
-// Initialize Firebase only once
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+// 1. Initialize App
+const app: FirebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// 1. FIX AUTH PERSISTENCE (Keeps you logged in)
-const auth = getAuth(app);
-
-// 2. FIX DATABASE CONNECTION (Solves "Client is Offline")
-// Use standard getFirestore instead of initializeFirestore to avoid offline issues
-let db: Firestore;
+// 2. Initialize Auth (Standard Method)
+// We let Firebase auto-detect React Native storage
+let auth: Auth;
 try {
-  db = getFirestore(app);
-} catch (err) {
-  // If getFirestore fails, try initializeFirestore as fallback
-  try {
-    db = initializeFirestore(app, {
-        experimentalForceLongPolling: true, 
-    });
-  } catch (e) {
-    throw new Error('Failed to initialize Firestore');
-  }
+  auth = getAuth(app);
+} catch (e) {
+  auth = initializeAuth(app);
 }
 
-export { auth, db };
+// 3. Initialize Firestore (With Offline Fix)
+let db: Firestore;
+try {
+  db = initializeFirestore(app, {
+    experimentalForceLongPolling: true, 
+  });
+} catch (e) {
+  db = getFirestore(app);
+}
+
+// 4. Storage
+const storage: FirebaseStorage = getStorage(app);
+
+export { auth, db, storage };
