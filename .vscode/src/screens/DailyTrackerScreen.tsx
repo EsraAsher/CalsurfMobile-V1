@@ -1,5 +1,5 @@
 // src/screens/DailyTrackerScreen.tsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, 
   ActivityIndicator, Alert, Platform, KeyboardAvoidingView, StatusBar, 
@@ -11,7 +11,7 @@ import { Feather } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // Import Storage
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // --- FIREBASE IMPORTS ---
 import { doc, getDoc, collection, query, orderBy, limit, getDocs, onSnapshot } from 'firebase/firestore';
@@ -19,38 +19,23 @@ import { auth, db } from '../config/firebase';
 
 // --- CUSTOM HOOKS & API ---
 import { useFoodLog } from '@/hooks/useFoodLog';
-import { getAccurateCalories, getUserRegion, identifyFoodFromVoice } from '../api/gemini';
+import { getAccurateCalories, getUserRegion, identifyFoodFromVoice, getCelebrationMessage } from '../api/gemini';
 import { DailyLogItem } from '../types/data';
-import { COLORS, SPACING, RADIUS } from '../theme';
+import { SPACING, RADIUS, ThemeColors } from '../theme';
+import { useTheme } from '../context/ThemeContext';
+import CelebrationOverlay from '../../../components/CelebrationOverlay';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = width - (SPACING.l * 2); 
-const NEON_GREEN = '#ADFF2F';
-
-// --- COMPONENT: FOOD CARD ---
-const FoodCard = ({ title, calories, protein, isEaten, onToggle, onDelete }: any) => (
-  <View style={styles.cardRow}>
-    <View style={styles.cardInfo}>
-      <Text style={styles.cardTitle}>{title}</Text>
-      <Text style={styles.cardSubtitle}>{calories} kcal  •  {protein}g protein</Text>
-    </View>
-    <View style={styles.cardActions}>
-        <TouchableOpacity onPress={onToggle} style={[styles.checkButton, isEaten && styles.checkButtonActive]}>
-            <Feather name="check" size={16} color={isEaten ? '#FFF' : COLORS.textMuted} />
-        </TouchableOpacity>
-        <TouchableOpacity onPress={onDelete} style={styles.deleteButton}>
-            <Feather name="trash-2" size={18} color={COLORS.danger} />
-        </TouchableOpacity>
-    </View>
-  </View>
-);
 
 // --- MAIN SCREEN ---
 export default function DailyTrackerScreen() {
   const user = auth.currentUser;
-  const { logs: dailyLog, addLog, toggleEaten, deleteLog } = useFoodLog();
+  const { logs: dailyLog, addLog, deleteLog, todayKey } = useFoodLog();
   const router = useRouter(); 
   const { voiceData } = useLocalSearchParams();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [userLocation, setUserLocation] = useState<string>('Locating...');
   const [searchText, setSearchText] = useState('');
@@ -63,27 +48,28 @@ export default function DailyTrackerScreen() {
   const [displayName, setDisplayName] = useState(user?.displayName || 'Thicc User');
   const [goals, setGoals] = useState({ calories: 2000, protein: 150 });
   
-  // 👇 NOTIFICATION STATE
+  // Notification State
   const [hasUnread, setHasUnread] = useState(false);
+
+  // Celebration State
+  const [celebrationVisible, setCelebrationVisible] = useState(false);
+  const [celebrationData, setCelebrationData] = useState({ percentage: 0, message: '' });
+  const [milestonesHit, setMilestonesHit] = useState<Set<number>>(new Set());
 
   const scrollX = useRef(new Animated.Value(0)).current;
 
-  // --- 1. CHECK FOR UPDATES ---
-// --- 1. REAL-TIME NOTIFICATION LISTENER ---
+  // --- REAL-TIME NOTIFICATION LISTENER ---
   useEffect(() => {
-    // Listen to the 'announcements' collection constantly
-    const q = query(collection(db, "announcements"), orderBy("createdAt", "desc"), limit(1));
+    const q = query(collection(db, "updates"), orderBy("createdAt", "desc"), limit(1));
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
         if (!snapshot.empty) {
             const latestPost = snapshot.docs[0].data();
             const latestTime = new Date(latestPost.createdAt).getTime();
             
-            // Get the time user last opened the updates page
             const lastSeen = await AsyncStorage.getItem('lastViewedUpdates');
             const seenTime = lastSeen ? new Date(lastSeen).getTime() : 0;
 
-            // If the post is newer than the last visit, show the dot
             if (latestTime > seenTime) {
                 setHasUnread(true);
             } else {
@@ -95,29 +81,33 @@ export default function DailyTrackerScreen() {
     return () => unsubscribe();
   }, []);
 
-  // --- 2. FETCH REAL PROFILE DATA ---
+  // --- REAL-TIME PROFILE DATA LISTENER ---
   useEffect(() => {
-    const fetchProfile = async () => {
-      if (user) {
-        try {
-          const docSnap = await getDoc(doc(db, "users", user.uid));
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            if (data.photoURL) setAvatar(data.photoURL);
-            const realName = data.name || data.displayName || user.displayName;
-            if (realName) setDisplayName(realName);
-            if (data.calories) {
-                setGoals(prev => ({ ...prev, calories: data.calories }));
-            }
-          } else {
-            if (user.photoURL) setAvatar(user.photoURL);
-            if (user.displayName) setDisplayName(user.displayName);
-          }
-        } catch (e) { console.log("Error fetching profile:", e); }
+    if (!user) return;
+
+    const unsubscribe = onSnapshot(doc(db, "users", user.uid), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.photoURL) setAvatar(data.photoURL);
+        const realName = data.displayName || data.name || user.displayName || "Thicc User";
+        setDisplayName(realName);
+        if (data.calories) {
+            setGoals(prev => ({ ...prev, calories: data.calories }));
+        }
+        if (data.protein) {
+            setGoals(prev => ({ ...prev, protein: data.protein }));
+        }
+      } else {
+        if (user.photoURL) setAvatar(user.photoURL);
+        if (user.displayName) setDisplayName(user.displayName);
       }
-    };
-    fetchProfile();
+    }, (error) => {
+      console.log("Error listening to profile:", error);
+    });
+
     getUserRegion().then(setUserLocation);
+
+    return () => unsubscribe();
   }, [user]);
 
   // --- HANDLE VOICE DATA ---
@@ -131,8 +121,7 @@ export default function DailyTrackerScreen() {
       }
   }, [voiceData]);
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  const todaysLogs = dailyLog.filter((item: DailyLogItem) => item.date === todayStr);
+  const todaysLogs = dailyLog;
 
   const totals = todaysLogs.reduce((acc: { calories: number; protein: number }, item: DailyLogItem) => {
     if (item.isEaten) {
@@ -142,17 +131,62 @@ export default function DailyTrackerScreen() {
     return acc;
   }, { calories: 0, protein: 0 });
 
+  // --- CHECK FOR CELEBRATION MILESTONES ---
+  useEffect(() => {
+    const checkMilestone = async () => {
+      const percentage = Math.floor((totals.calories / goals.calories) * 100);
+      const today = todayKey;
+      
+      const milestones = [70, 90, 100];
+      for (const milestone of milestones) {
+        if (percentage >= milestone) {
+          const celebrationKey = `celebration_${today}_${milestone}`;
+          
+          const alreadyCelebrated = await AsyncStorage.getItem(celebrationKey);
+          
+          if (!alreadyCelebrated) {
+            const message = await getCelebrationMessage(milestone);
+            setCelebrationData({ percentage: milestone, message });
+            setCelebrationVisible(true);
+            
+            await AsyncStorage.setItem(celebrationKey, 'true');
+            
+            setMilestonesHit(prev => new Set(prev).add(milestone));
+            break;
+          }
+        }
+      }
+    };
+
+    checkMilestone();
+  }, [totals.calories, goals.calories, todayKey]);
+
+  const FoodCard = ({ title, calories, protein, onDelete }: { title: string; calories: number; protein: number; onDelete: () => void }) => (
+    <View style={styles.cardRow}>
+      <View style={styles.cardInfo}>
+        <Text style={styles.cardTitle}>{title}</Text>
+        <Text style={styles.cardSubtitle}>{calories} kcal  •  {protein}g protein</Text>
+      </View>
+      <View style={styles.cardActions}>
+        <TouchableOpacity onPress={onDelete} style={styles.deleteButton}>
+          <Feather name="trash-2" size={18} color={colors.danger} />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   const handleAddLogItem = (itemData: any) => {
     addLog({
-      date: new Date().toISOString().split('T')[0],
       userId: user?.uid || 'auth-user',
-      name: itemData.name,
+      name: itemData.name || searchText || 'Unknown Food',
       isEaten: true,
       mealType: 'snack',
-      calories: itemData.calories,
+      calories: itemData.calories || 0,
       protein: itemData.protein || 0,
-      totalCalories: itemData.calories,
-      totalProtein: itemData.protein || 0
+      totalCalories: itemData.calories || 0,
+      totalProtein: itemData.protein || 0,
+      totalCarbs: itemData.carbs || 0,
+      totalFats: itemData.fats || 0
     });
   };
 
@@ -199,64 +233,72 @@ export default function DailyTrackerScreen() {
 
   const renderCaloriesCard = () => (
     <TouchableOpacity activeOpacity={0.9} onPress={() => router.push('/stats')}>
-        <LinearGradient
-            colors={['#8d49fd', '#7f56f3', '#5691f3']}
-            start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} 
-            style={[styles.carouselCard, { width: CARD_WIDTH }]}
-        >
-            <View style={{ zIndex: 10 }}>
-                <Text style={styles.widgetLabel}>Calories Left</Text>
-                <Text style={styles.widgetValue}>{Math.max(0, goals.calories - totals.calories)}</Text>
-                <Text style={styles.widgetSub}>/ {goals.calories} kcal goal</Text>
-            </View>
-            <View style={styles.progressCircle}>
-                <Text style={styles.progressText}>{Math.round((totals.calories / goals.calories) * 100)}%</Text>
-            </View>
-        </LinearGradient>
+      <LinearGradient
+        colors={colors.gradients.calories}
+        start={{ x: 0.5, y: 0 }} 
+        end={{ x: 0.5, y: 1 }} 
+        style={[styles.carouselCard, { width: CARD_WIDTH }]}
+      >
+        <View style={{ zIndex: 10 }}>
+          <Text style={styles.widgetLabel}>Calories Left</Text>
+          <Text style={styles.widgetValue}>{Math.max(0, goals.calories - totals.calories)}</Text>
+          <Text style={styles.widgetSub}>/ {goals.calories} kcal goal</Text>
+        </View>
+        <View style={styles.progressCircle}>
+          <Text style={styles.progressText}>{Math.round((totals.calories / goals.calories) * 100)}%</Text>
+        </View>
+      </LinearGradient>
     </TouchableOpacity>
   );
 
   const renderProteinCard = () => (
     <TouchableOpacity activeOpacity={0.9} onPress={() => router.push('/stats')}>
-        <LinearGradient
-            colors={['#FF8C42', '#FF512F', '#DD2476']}
-            start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }}
-            style={[styles.carouselCard, { width: CARD_WIDTH }]}
-        >
-            <View style={{ zIndex: 10 }}>
-                <Text style={styles.widgetLabel}>Protein Goal</Text>
-                <Text style={styles.widgetValue}>{totals.protein}g</Text>
-                <Text style={styles.widgetSub}>/ {goals.protein}g target</Text>
-            </View>
-            <View style={styles.progressCircle}>
-                <Feather name="zap" size={24} color="#FFF" />
-            </View>
-        </LinearGradient>
+      <LinearGradient
+        colors={colors.gradients.protein}
+        start={{ x: 0.5, y: 0 }} 
+        end={{ x: 0.5, y: 1 }}
+        style={[styles.carouselCard, { width: CARD_WIDTH }]}
+      >
+        <View style={{ zIndex: 10 }}>
+          <Text style={styles.widgetLabel}>Protein Goal</Text>
+          <Text style={styles.widgetValue}>{totals.protein}g</Text>
+          <Text style={styles.widgetSub}>/ {goals.protein}g target</Text>
+        </View>
+        <View style={styles.progressCircle}>
+          <Feather name="zap" size={24} color={colors.onGradientText} />
+        </View>
+      </LinearGradient>
     </TouchableOpacity>
   );
 
   const renderEatenCard = () => (
     <TouchableOpacity activeOpacity={0.9} onPress={() => router.push('/stats')}>
-        <LinearGradient
-            colors={['#34D399', '#10B981', '#059669']}
-            start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }}
-            style={[styles.carouselCard, { width: CARD_WIDTH }]}
-        >
-            <View style={{ zIndex: 10 }}>
-                <Text style={styles.widgetLabel}>Total Eaten</Text>
-                <Text style={styles.widgetValue}>{totals.calories}</Text>
-                <Text style={styles.widgetSub}>kcal consumed</Text>
-            </View>
-            <View style={styles.progressCircle}>
-                <Feather name="activity" size={24} color="#FFF" />
-            </View>
-        </LinearGradient>
+      <LinearGradient
+        colors={colors.gradients.eaten}
+        start={{ x: 0.5, y: 0 }} 
+        end={{ x: 0.5, y: 1 }}
+        style={[styles.carouselCard, { width: CARD_WIDTH }]}
+      >
+        <View style={{ zIndex: 10 }}>
+          <Text style={styles.widgetLabel}>Total Eaten</Text>
+          <Text style={styles.widgetValue}>{totals.calories}</Text>
+          <Text style={styles.widgetSub}>kcal consumed</Text>
+        </View>
+        <View style={styles.progressCircle}>
+          <Feather name="activity" size={24} color={colors.onGradientText} />
+        </View>
+      </LinearGradient>
     </TouchableOpacity>
   );
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" />
+      <LinearGradient
+        colors={['rgba(92, 255, 47, 0.55)', 'transparent']}
+        style={styles.ambientGlow}
+        pointerEvents="none"
+      />
+      <StatusBar barStyle={colors.statusBarStyle} backgroundColor={colors.background} />
       <SafeAreaView style={{flex: 1}}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -269,20 +311,17 @@ export default function DailyTrackerScreen() {
 
             <View style={styles.headerActions}>
               
-              {/* 👇 NEW RED NOTIFICATION BUTTON */}
               <TouchableOpacity 
                 style={styles.notificationButton} 
                 onPress={() => {
-                    setHasUnread(false); // Clear dot immediately on press
+                    setHasUnread(false);
                     router.push('/updates');
                 }}
               >
-                <Feather name="bell" size={20} color="#FFF" />
-                {/* Yellow Dot logic */}
+                <Feather name="bell" size={20} color={colors.danger} />
                 {hasUnread && <View style={styles.redDot} />}
               </TouchableOpacity>
 
-              {/* Profile Button */}
               <TouchableOpacity 
                 style={styles.profileButton} 
                 onPress={() => router.push('/profile')}
@@ -290,8 +329,8 @@ export default function DailyTrackerScreen() {
                 {avatar ? (
                   <Image source={{ uri: avatar }} style={{ width: 38, height: 38, borderRadius: 19 }} />
                 ) : (
-                  <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.success, justifyContent: 'center', alignItems: 'center' }}>
-                      <Text style={{ color: '#000', fontWeight: 'bold', fontSize: 16 }}>
+                  <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: colors.success, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: colors.border }}>
+                      <Text style={{ color: colors.onGradientText, fontWeight: 'bold', fontSize: 16 }}>
                           {displayName ? displayName[0].toUpperCase() : 'U'}
                       </Text>
                   </View>
@@ -336,30 +375,29 @@ export default function DailyTrackerScreen() {
           </View>
 
           <TouchableOpacity 
-            style={styles.neonButton} 
+            style={styles.chatBubbleButton} 
             onPress={() => router.push('/insights')}
             activeOpacity={0.8}
           >
-             <Text style={styles.neonButtonText}>Chat with Surf</Text>
-             <Feather name="arrow-right" size={20} color="#000" />
+            <Text style={styles.chatBubbleText}>Surf Chat</Text>
           </TouchableOpacity>
 
           <Text style={styles.sectionTitle}>Add your Food</Text>
-          <View style={[styles.smartBarContainer, recording && styles.smartBarRecording]}>
+          <View style={styles.smartBarContainer}>
             <TouchableOpacity 
               style={[
                 styles.searchButtonCircle, 
-                recording && { backgroundColor: COLORS.danger }
+                recording && { backgroundColor: colors.danger }
               ]}
               onPress={handleSmartAdd}
               disabled={isFinding || !!recording}
             >
                {isFinding || isProcessingVoice ? (
-                 <ActivityIndicator size="small" color="#FFF" />
+                 <ActivityIndicator size="small" color={colors.onGradientText} />
                ) : recording ? (
-                 <Feather name="mic" size={20} color="#FFF" />
+                 <Feather name="mic" size={20} color={colors.onGradientText} />
                ) : (
-                 <Feather name="search" size={20} color="#FFF" />
+                 <Feather name="search" size={20} color={colors.onGradientText} />
                )}
             </TouchableOpacity>
 
@@ -371,7 +409,7 @@ export default function DailyTrackerScreen() {
               <TextInput 
                 style={styles.smartInput}
                 placeholder="Type a meal..."
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textMuted}
                 value={searchText}
                 onChangeText={setSearchText}
                 onSubmitEditing={handleSmartAdd}
@@ -389,7 +427,7 @@ export default function DailyTrackerScreen() {
                  <Feather 
                    name="mic" 
                    size={22} 
-                   color={recording ? COLORS.danger : '#18181b'} 
+                   color={recording ? colors.danger : colors.textPrimary} 
                  /> 
               </TouchableOpacity>
             </View>
@@ -402,7 +440,7 @@ export default function DailyTrackerScreen() {
                 style={styles.calendarButton}
             >
                 <Text style={styles.calendarText}>History</Text>
-                <Feather name="calendar" size={18} color={COLORS.textMuted} />
+              <Feather name="calendar" size={18} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
 
@@ -419,8 +457,6 @@ export default function DailyTrackerScreen() {
                   title={item.name || 'Unknown'}
                   calories={item.totalCalories}
                   protein={item.totalProtein}
-                  isEaten={item.isEaten}
-                  onToggle={() => toggleEaten(item.id, item.isEaten)}
                   onDelete={() => deleteLog(item.id)}
                 />
               ))
@@ -431,180 +467,202 @@ export default function DailyTrackerScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
       </SafeAreaView>
+
+      <CelebrationOverlay
+        visible={celebrationVisible}
+        percentage={celebrationData.percentage}
+        message={celebrationData.message}
+        onClose={() => setCelebrationVisible(false)}
+      />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
-  scrollContent: { padding: SPACING.l },
-  header: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    marginBottom: SPACING.xl 
+const withOpacity = (hex: string, opacity: number) => {
+  const normalized = hex.replace('#', '');
+  const expanded = normalized.length === 3 ? normalized.split('').map((char) => char + char).join('') : normalized;
+  const int = parseInt(expanded, 16);
+
+  if (Number.isNaN(int)) {
+    return hex;
+  }
+
+  const r = (int >> 16) & 255;
+  const g = (int >> 8) & 255;
+  const b = int & 255;
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+};
+
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
+  ambientGlow: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 250,
+    zIndex: 0,
   },
-  greeting: { fontSize: 16, color: COLORS.textSecondary },
-  username: { fontSize: 28, fontWeight: 'bold', color: COLORS.textPrimary },
-  headerActions: { flexDirection: 'row', gap: SPACING.m }, // Gap between buttons
-  
-  // NEW NOTIFICATION BUTTON STYLE
-notificationButton: {
-    width: 40, 
-    height: 40, 
-    borderRadius: 20, 
-    
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    borderWidth: 1, 
-     
-    position: 'relative', // Needed for dot positioning
-    overflow: 'visible',  // 👈 CRITICAL: Ensures dot isn't cut off
+  scrollContent: { padding: SPACING.l, zIndex: 1 },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: SPACING.xl,
   },
-  // THE YELLOW DOT
+  greeting: { fontSize: 16, color: colors.textSecondary },
+  username: { fontSize: 28, fontWeight: 'bold', color: colors.textPrimary },
+  headerActions: { flexDirection: 'row', gap: SPACING.m },
+  notificationButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+    position: 'relative',
+    overflow: 'visible',
+  },
   redDot: {
-      position: 'absolute',
-      top: -2,  // Moved slightly up
-      right: -2, // Moved slightly right
-      width: 14, // Slightly bigger
-      height: 14,
-      borderRadius: 7,
-      backgroundColor: '#FFD700', // Gold/Yellow (High contrast against red)
-      borderWidth: 2,
-      borderColor: '#3b0b0b', // Matches button bg to look cut-out
-      zIndex: 10,
-      elevation: 5,
+    position: 'absolute',
+    top: -2,
+    right: -1,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: colors.danger,
+    borderWidth: 2,
+    borderColor: colors.background,
+    zIndex: 10,
+    elevation: 5,
   },
-
-  profileButton: { 
-    width: 40, 
-    height: 40, 
-    borderRadius: 20, 
-    backgroundColor: COLORS.cardHighlight, 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    borderWidth: 1, 
-    borderColor: COLORS.border 
+  profileButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.cardHighlight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-
-  carouselCard: { 
-    borderRadius: RADIUS.xl, 
-    padding: SPACING.l, 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    height: 160 
+  carouselCard: {
+    borderRadius: RADIUS.xl,
+    padding: SPACING.l,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    height: 160,
+    overflow: 'hidden',
   },
-  widgetLabel: { color: 'rgba(255,255,255,0.9)', fontSize: 14, marginBottom: 4, fontWeight: '500' },
-  widgetValue: { fontSize: 36, fontWeight: 'bold', color: '#FFF' },
-  widgetSub: { fontSize: 12, color: 'rgba(255,255,255,0.8)' },
-  progressCircle: { 
-    width: 70, 
-    height: 70, 
-    borderRadius: 35, 
-    borderWidth: 4, 
-    borderColor: 'rgba(255,255,255,0.2)', 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    backgroundColor: 'rgba(255,255,255,0.1)' 
+  widgetLabel: { color: withOpacity(colors.onGradientText, 0.9), fontSize: 14, marginBottom: 4, fontWeight: '500' },
+  widgetValue: { fontSize: 36, fontWeight: 'bold', color: colors.onGradientText },
+  widgetSub: { fontSize: 12, color: withOpacity(colors.onGradientText, 0.8) },
+  progressCircle: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    borderWidth: 4,
+    borderColor: withOpacity(colors.onGradientText, 0.2),
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: withOpacity(colors.onGradientText, 0.1),
   },
-  progressText: { color: '#FFF', fontWeight: 'bold' },
-
-  indicatorContainer: { 
-    marginTop: SPACING.m, 
-    marginBottom: SPACING.xl, 
-    height: 4, 
-    width: CARD_WIDTH, 
-    backgroundColor: COLORS.card, 
-    borderRadius: 2, 
-    overflow: 'hidden', 
-    alignSelf: 'center' 
+  progressText: { color: colors.onGradientText, fontWeight: 'bold' },
+  indicatorContainer: {
+    marginTop: SPACING.m,
+    marginBottom: SPACING.xl,
+    height: 0,
+    width: CARD_WIDTH,
+    backgroundColor: colors.card,
+    borderRadius: 2,
+    overflow: 'hidden',
+    alignSelf: 'center',
   },
-  indicatorTrack: { flex: 1, backgroundColor: COLORS.card },
-  indicatorFill: { height: '100%', backgroundColor: COLORS.textSecondary, borderRadius: 2 },
-
-  neonButton: { 
-    alignSelf: 'center', 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    justifyContent: 'center', 
-    height: 56, 
-    paddingHorizontal: 28, 
-    borderRadius: 100, 
-    backgroundColor: NEON_GREEN, 
-    marginBottom: SPACING.xl, 
-    gap: 8,
-    shadowColor: NEON_GREEN,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 10,
-    elevation: 5, 
+  indicatorTrack: { flex: 1, backgroundColor: colors.card },
+  indicatorFill: { height: '100%', backgroundColor: colors.primary, borderRadius: 2 },
+  chatBubbleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 20,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+    backgroundColor: colors.neon,
+    marginBottom: SPACING.xl,
+    alignSelf: 'flex-start',
+    gap: 10,
+    shadowColor: colors.textPrimary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 3,
   },
-  neonButtonText: { color: '#000000', fontSize: 19, fontWeight: 'bold', letterSpacing: 0.5 },
-
-  sectionTitle: { fontSize: 18, fontWeight: 'bold', color: COLORS.textPrimary, marginBottom: SPACING.m },
-
-  smartBarContainer: { 
-    flexDirection: 'row', 
-    backgroundColor: '#FFF', 
-    borderRadius: 30, 
-    padding: 5, 
-    alignItems: 'center', 
-    marginBottom: SPACING.xl, 
+  chatBubbleText: {
+    color: '#000000',
+    fontSize: 16,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  sectionTitle: { fontSize: 18, fontWeight: 'bold', color: colors.textPrimary, marginBottom: SPACING.m },
+  smartBarContainer: {
+    flexDirection: 'row',
+    backgroundColor: colors.card,
+    borderRadius: 30,
+    padding: 5,
+    alignItems: 'center',
+    marginBottom: SPACING.xl,
     height: 60,
-    shadowColor: '#000',
+    shadowColor: colors.textPrimary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 5,
   },
-  smartBarRecording: { backgroundColor: '#fee2e2', borderColor: COLORS.danger, borderWidth: 1 },
-  searchButtonCircle: { 
-    width: 48, 
-    height: 48, 
-    borderRadius: 24, 
-    backgroundColor: '#18181b', 
-    justifyContent: 'center', 
-    alignItems: 'center' 
+  smartBarRecording: { },
+  searchButtonCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  smartInput: { flex: 1, height: '100%', paddingHorizontal: 12, fontSize: 16, color: '#18181b' },
+  smartInput: { flex: 1, height: '100%', paddingHorizontal: 12, fontSize: 16, color: colors.textPrimary },
   recordingContainer: { flex: 1, paddingHorizontal: 12, justifyContent: 'center' },
-  recordingText: { color: COLORS.danger, fontWeight: '600', fontStyle: 'italic' },
+  recordingText: { color: colors.danger, fontWeight: '600', fontStyle: 'italic' },
   rightIcons: { flexDirection: 'row', gap: 16, paddingRight: 20, alignItems: 'center' },
-
   listHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: SPACING.s },
   logList: { gap: SPACING.s },
-
-  cardRow: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    backgroundColor: COLORS.card, 
-    padding: SPACING.m, 
-    borderRadius: RADIUS.m, 
-    borderWidth: 1, 
-    borderColor: COLORS.border 
+  cardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    padding: SPACING.m,
+    borderRadius: RADIUS.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   cardInfo: { flex: 1 },
-  cardTitle: { fontSize: 16, fontWeight: '600', color: COLORS.textPrimary },
-  cardSubtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4 },
+  cardTitle: { fontSize: 16, fontWeight: '600', color: colors.textPrimary },
+  cardSubtitle: { fontSize: 13, color: colors.textMuted, marginTop: 4 },
   cardActions: { flexDirection: 'row', gap: SPACING.m },
-  checkButton: { width: 32, height: 32, borderRadius: 10, backgroundColor: COLORS.cardHighlight, justifyContent: 'center', alignItems: 'center' },
-  checkButtonActive: { backgroundColor: COLORS.success },
   deleteButton: { justifyContent: 'center' },
-
   emptyState: { alignItems: 'center', marginTop: SPACING.xl },
-  emptyText: { color: COLORS.textMuted, marginTop: SPACING.s },
-
+  emptyText: { color: colors.textMuted, marginTop: SPACING.s },
   calendarButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     padding: 8,
-    backgroundColor: COLORS.cardHighlight,
+    backgroundColor: colors.cardHighlight,
     borderRadius: 8,
   },
   calendarText: {
-    color: COLORS.textMuted,
+    color: colors.textMuted,
     fontSize: 12,
     fontWeight: '600',
   },

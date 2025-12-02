@@ -47,6 +47,18 @@ export async function getAccurateCalories(foodName: string, location: string): P
             "fats": number,
             "servingSize": "string"
         }
+        
+        **NAME RULES:**
+        - Keep the name SIMPLE and MINIMALISTIC
+        - Use format: "Food with Food" (e.g., "Chicken with Rice")
+        - DO NOT include:
+          * Country/region names (e.g., "(India)", "(US)")
+          * Words like "(Estimated)", "(Typical)", "(Average)"
+          * Quantities or weights (e.g., "350g", "2 cups")
+          * Serving descriptions (e.g., "1 plate", "medium bowl")
+        - If multiple items, use "with" between them
+        - Capitalize properly (e.g., "Grilled Chicken with Vegetables")
+        
         Do not include markdown formatting.
     `;
 
@@ -84,6 +96,17 @@ export async function identifyFoodFromVoice(base64Audio: string): Promise<FoodIt
             "fats": number,
             "servingSize": "string"
         }
+        
+        **NAME RULES:**
+        - Keep the name SIMPLE and MINIMALISTIC
+        - Use format: "Food with Food" (e.g., "Chicken with Rice")
+        - DO NOT include:
+          * Country/region names (e.g., "(India)", "(US)")
+          * Words like "(Estimated)", "(Typical)", "(Average)")
+          * Quantities or weights (e.g., "350g", "2 cups")
+          * Serving descriptions (e.g., "1 plate", "medium bowl")
+        - If multiple items, use "with" between them
+        - Capitalize properly (e.g., "Grilled Chicken with Vegetables")
     `;
 
     try {
@@ -149,4 +172,48 @@ export async function getAiCoaching(userMessage: string, dailyLogs: any[]) {
         console.error("Gemini Chat Error:", error);
         return "Surf is offline right now. Try again later!";
     }
+}
+
+// --- 5. CELEBRATION MESSAGE GENERATOR ---
+export async function getCelebrationMessage(percentage: number): Promise<string> {
+    if (!ai) return getDefaultCelebrationMessage(percentage);
+
+    const prompt = `
+        You are "Surf", an energetic fitness coach. The user just hit ${percentage}% of their daily calorie goal!
+        
+        Generate a SHORT, HYPE celebration message (15-25 words max).
+        
+        Rules:
+        - Be enthusiastic and motivating
+        - Use emojis sparingly (1-2 max)
+        - Keep it casual like a text from a gym buddy
+        - For 70%: Encourage to keep pushing
+        - For 90%: Build excitement, almost there
+        - For 100%: Full celebration mode
+        
+        Just return the message, nothing else.
+    `;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.0-flash",
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        });
+
+        const responseText = response.text;
+        return typeof responseText === 'string' ? responseText.trim() : getDefaultCelebrationMessage(percentage);
+
+    } catch (error) {
+        console.error("Gemini Celebration Error:", error);
+        return getDefaultCelebrationMessage(percentage);
+    }
+}
+
+function getDefaultCelebrationMessage(percentage: number): string {
+    const messages = {
+        70: "70% down! You're crushing it today. Keep that energy up! 🔥",
+        90: "90% there! So close you can taste it. Finish strong! 💪",
+        100: "100%! Yo that's what I'm talking about! Goal absolutely destroyed! 🎯"
+    };
+    return messages[percentage as 70 | 90 | 100] || "Great progress! Keep going! 💪";
 }

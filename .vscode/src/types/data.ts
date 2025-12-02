@@ -33,7 +33,8 @@ export interface LogEntry {
  */
 export interface DailyLogItem {
     id: string;
-    date: string; // YYYY-MM-DD
+    date: string; // YYYY-MM-DD (legacy field)
+    dateKey: string; // YYYY-MM-DD (anti-cheat protected)
     calories: number;
     protein: number;
     userId: string;
@@ -45,7 +46,11 @@ export interface DailyLogItem {
     // Aggregate totals
     totalCalories: number;
     totalProtein: number;
-    items?: FoodItem[]; 
+    totalCarbs?: number;
+    totalFats?: number;
+    items?: FoodItem[];
+    // Timestamps
+    createdAt?: any; // Firestore serverTimestamp
 }
 
 export interface MealTemplate {

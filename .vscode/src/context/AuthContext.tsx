@@ -4,6 +4,7 @@ import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth } from '../config/firebase';
 import { View, ActivityIndicator } from 'react-native';
 import { COLORS } from '../theme';
+import { usePushNotifications } from '@/hooks/usePushNotifications';
 
 interface AuthContextType {
   user: User | null;
@@ -17,6 +18,9 @@ export const useAuth = () => useContext(AuthContext);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Register for push notifications when user is logged in
+  usePushNotifications();
 
   useEffect(() => {
     console.log("AuthContext: Setting up listener...");

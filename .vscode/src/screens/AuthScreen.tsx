@@ -24,7 +24,7 @@ const COLORS = {
 const FONTS = {
   heading: 'Montserrat_700Bold',
   sub: 'Poppins_600SemiBold',
-  body: 'Inter_400Regular',
+  body: 'DMSans_400Regular',
 };
 
 export default function AuthScreen() {

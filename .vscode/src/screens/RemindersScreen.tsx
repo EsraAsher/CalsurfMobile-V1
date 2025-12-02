@@ -1,5 +1,5 @@
 // src/screens/RemindersScreen.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity, Switch, 
   ScrollView, Alert, Platform, ActivityIndicator 
@@ -12,7 +12,8 @@ import * as Notifications from 'expo-notifications';
 import { doc, onSnapshot, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 
 import { auth, db } from '../config/firebase';
-import { COLORS, SPACING, RADIUS } from '../theme';
+import { SPACING, RADIUS } from '../theme';
+import { useTheme } from '../context/ThemeContext';
 
 // --- TYPES ---
 type Frequency = 'Daily' | 'Weekly' | 'Monthly';
@@ -30,6 +31,8 @@ interface Reminder {
 export default function RemindersScreen() {
   const router = useRouter();
   const user = auth.currentUser;
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   // --- STATE ---
   const [reminders, setReminders] = useState<Reminder[]>([]);
@@ -102,37 +105,52 @@ export default function RemindersScreen() {
     }
 
     try {
-        // Build trigger separately with proper typing
-        const trigger: any = {
-            hour: date.getHours(),
-            minute: date.getMinutes(),
-            repeats: true,
-        };
+        // Build trigger with proper type for expo-notifications
+        let trigger: Notifications.NotificationTriggerInput;
 
-        // Add Frequency Logic
-        if (frequency === 'Weekly') {
-            // Expo uses 1-7 (1 = Sunday, 7 = Saturday)
-            trigger.weekday = date.getDay() + 1; 
-        } else if (frequency === 'Monthly') {
-            trigger.day = date.getDate();
+        if (frequency === 'Daily') {
+            // Daily repeating notification
+            trigger = {
+                type: Notifications.SchedulableTriggerInputTypes.DAILY,
+                hour: date.getHours(),
+                minute: date.getMinutes(),
+            };
+        } else if (frequency === 'Weekly') {
+            // Weekly repeating notification
+            trigger = {
+                type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+                hour: date.getHours(),
+                minute: date.getMinutes(),
+                weekday: date.getDay() + 1, // 1-7 (Sunday = 1)
+            };
+        } else {
+            // Monthly - use calendar trigger
+            trigger = {
+                type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
+                hour: date.getHours(),
+                minute: date.getMinutes(),
+                day: date.getDate(),
+                repeats: true,
+            };
         }
 
-        // CRITICAL: Add channelId to trigger for Android, not content
-        if (Platform.OS === 'android') {
-            trigger.channelId = type === 'alarm' ? 'thicc_alarm_v2' : 'default';
-        }
+        // Android channel configuration
+        const androidConfig = Platform.OS === 'android' ? {
+            channelId: type === 'alarm' ? 'thicc_alarm_v2' : 'default',
+        } : {};
 
         const id = await Notifications.scheduleNotificationAsync({
             content: {
                 title: type === 'alarm' ? `🚨 ${label.toUpperCase()}!` : label,
                 body: `Time to log your ${label.toLowerCase()}.`,
                 sound: true,
-                color: type === 'alarm' ? COLORS.danger : COLORS.primary,
+                color: type === 'alarm' ? colors.danger : colors.primary,
+                ...androidConfig,
             },
             trigger,
         });
 
-        console.log(`✅ Scheduled notification at ${date.getHours()}:${date.getMinutes()} (ID: ${id})`);
+        console.log(`✅ Scheduled ${frequency} notification at ${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')} (ID: ${id})`);
         return id;
     } catch (e) {
         console.error("Schedule Error:", e);
@@ -227,7 +245,7 @@ export default function RemindersScreen() {
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Reminders</Text>
             <TouchableOpacity onPress={() => setIsAdding(!isAdding)}>
-                <Feather name={isAdding ? "x" : "plus"} size={24} color={COLORS.primary} />
+                <Feather name={isAdding ? "x" : "plus"} size={24} color={colors.primary} />
             </TouchableOpacity>
         </View>
 
@@ -307,7 +325,7 @@ export default function RemindersScreen() {
                         <Switch 
                             value={newType === 'alarm'} 
                             onValueChange={(v) => setNewType(v ? 'alarm' : 'notification')}
-                            trackColor={{ false: '#333', true: COLORS.danger }}
+                            trackColor={{ false: colors.cardHighlight, true: colors.danger }}
                         />
                     </View>
 
@@ -321,10 +339,10 @@ export default function RemindersScreen() {
             <Text style={styles.listTitle}>Your Schedule</Text>
             
             {loading ? (
-                <ActivityIndicator color={COLORS.primary} />
+                <ActivityIndicator color={colors.primary} />
             ) : reminders.length === 0 ? (
                 <View style={styles.emptyState}>
-                    <Feather name="bell-off" size={40} color={COLORS.textMuted} />
+                    <Feather name="bell-off" size={40} color={colors.textMuted} />
                     <Text style={styles.emptyText}>No reminders set yet.</Text>
                 </View>
             ) : (
@@ -351,10 +369,10 @@ export default function RemindersScreen() {
                             <Switch 
                                 value={item.enabled}
                                 onValueChange={(v) => handleToggle(index, v)}
-                                trackColor={{ false: '#333', true: COLORS.primary }}
+                                trackColor={{ false: colors.cardHighlight, true: colors.primary }}
                             />
                             <TouchableOpacity onPress={() => handleDelete(item)} style={styles.deleteBtn}>
-                                <Feather name="trash-2" size={18} color={COLORS.textMuted} />
+                                <Feather name="trash-2" size={18} color={colors.textMuted} />
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -366,47 +384,47 @@ export default function RemindersScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
+const createStyles = (colors: any) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: SPACING.m, paddingVertical: SPACING.s },
   backButton: { padding: 4 },
-  headerTitle: { fontSize: 18, fontWeight: '600', color: '#FFF' },
+  headerTitle: { fontSize: 18, fontWeight: '600', color: colors.textPrimary },
   content: { padding: SPACING.l },
   
-  addForm: { backgroundColor: '#1C1C1E', padding: SPACING.m, borderRadius: RADIUS.m, marginBottom: SPACING.xl },
-  sectionTitle: { color: '#FFF', fontWeight: 'bold', marginBottom: SPACING.m },
+  addForm: { backgroundColor: colors.card, padding: SPACING.m, borderRadius: RADIUS.m, marginBottom: SPACING.xl },
+  sectionTitle: { color: colors.textPrimary, fontWeight: 'bold', marginBottom: SPACING.m },
   
-  chip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: '#333', marginRight: 8 },
-  smallChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#333' },
-  chipActive: { backgroundColor: COLORS.primary },
-  smallChipActive: { backgroundColor: COLORS.primary },
-  chipText: { color: '#FFF' },
-  smallChipText: { color: '#FFF', fontSize: 12 },
-  chipTextActive: { color: '#FFF', fontWeight: 'bold' },
+  chip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: colors.cardHighlight, marginRight: 8 },
+  smallChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.cardHighlight },
+  chipActive: { backgroundColor: colors.primary },
+  smallChipActive: { backgroundColor: colors.primary },
+  chipText: { color: colors.textPrimary },
+  smallChipText: { color: colors.textPrimary, fontSize: 12 },
+  chipTextActive: { color: '#000', fontWeight: 'bold' },
   
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.m },
-  label: { color: '#FFF', fontSize: 16 },
-  subLabel: { color: COLORS.textMuted, fontSize: 12 },
+  label: { color: colors.textPrimary, fontSize: 16 },
+  subLabel: { color: colors.textMuted, fontSize: 12 },
   
-  saveButton: { backgroundColor: COLORS.primary, padding: 16, borderRadius: RADIUS.m, alignItems: 'center', marginTop: 8 },
-  saveButtonText: { color: '#FFF', fontWeight: 'bold' },
+  saveButton: { backgroundColor: colors.primary, padding: 16, borderRadius: RADIUS.m, alignItems: 'center', marginTop: 8 },
+  saveButtonText: { color: '#000', fontWeight: 'bold' },
 
-  androidPickerBtn: { backgroundColor: '#333', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
-  androidPickerText: { color: '#FFF', fontWeight: 'bold' },
+  androidPickerBtn: { backgroundColor: colors.cardHighlight, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
+  androidPickerText: { color: colors.textPrimary, fontWeight: 'bold' },
 
-  listTitle: { color: COLORS.textMuted, marginBottom: SPACING.m, fontWeight: '600' },
-  card: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1C1C1E', padding: SPACING.m, borderRadius: RADIUS.m, marginBottom: SPACING.m },
+  listTitle: { color: colors.textMuted, marginBottom: SPACING.m, fontWeight: '600' },
+  card: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: colors.card, padding: SPACING.m, borderRadius: RADIUS.m, marginBottom: SPACING.m },
   cardLeft: { gap: 4 },
-  cardTime: { color: '#FFF', fontSize: 24, fontWeight: 'bold' },
+  cardTime: { color: colors.textPrimary, fontSize: 24, fontWeight: 'bold' },
   tagRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  cardLabel: { color: COLORS.textMuted, fontSize: 14 },
-  dot: { width: 4, height: 4, borderRadius: 2, backgroundColor: '#555' },
-  freqText: { color: COLORS.textMuted, fontSize: 12, fontStyle: 'italic' },
-  alarmBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.danger, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, gap: 4 },
+  cardLabel: { color: colors.textMuted, fontSize: 14 },
+  dot: { width: 4, height: 4, borderRadius: 2, backgroundColor: colors.border },
+  freqText: { color: colors.textMuted, fontSize: 12, fontStyle: 'italic' },
+  alarmBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.danger, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, gap: 4 },
   alarmText: { color: '#FFF', fontSize: 10, fontWeight: 'bold' },
   cardRight: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   deleteBtn: { padding: 4 },
   
   emptyState: { alignItems: 'center', marginTop: 40, opacity: 0.7 },
-  emptyText: { color: COLORS.textMuted, marginTop: 10 },
+  emptyText: { color: colors.textMuted, marginTop: 10 },
 });

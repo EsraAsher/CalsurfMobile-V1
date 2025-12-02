@@ -1,10 +1,9 @@
 // src/config/firebase.ts
 import { initializeApp, getApp, getApps, FirebaseApp } from "firebase/app";
-import { getAuth, initializeAuth, Auth } from "firebase/auth";
+import { initializeAuth, getReactNativePersistence, Auth } from "firebase/auth";
 import { getFirestore, initializeFirestore, Firestore } from "firebase/firestore";
 import { getStorage, FirebaseStorage } from "firebase/storage";
-// This import ensures the storage library is available for Firebase to find automatically
-import '@react-native-async-storage/async-storage';
+import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
 
 // 👇 PASTE YOUR REAL KEYS HERE (From the New Project)
 const firebaseConfig = {
@@ -19,13 +18,16 @@ const firebaseConfig = {
 // 1. Initialize App
 const app: FirebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// 2. Initialize Auth (Standard Method)
-// We let Firebase auto-detect React Native storage
+// 2. Initialize Auth with React Native persistence
 let auth: Auth;
 try {
-  auth = getAuth(app);
+  auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(ReactNativeAsyncStorage)
+  });
 } catch (e) {
-  auth = initializeAuth(app);
+  // Auth already initialized, this is fine
+  const { getAuth } = require('firebase/auth');
+  auth = getAuth(app);
 }
 
 // 3. Initialize Firestore (With Offline Fix)
